@@ -262,3 +262,33 @@ def plot_shaping_convergence(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
+
+
+def plot_shaping_convergence_comparison(
+    series: dict[str, np.ndarray],
+    shape_label: str,
+    out_path: Path,
+) -> None:
+    """Overplot the energy-in-target convergence of multiple shaping methods.
+
+    ``series`` maps a method name (e.g. ``"SPGD"`` / ``"H-GD"`` / ``"Torch-GD"``)
+    to its ``energy_hist`` array.  The final value is shown in each legend label.
+    """
+    fig, ax = plt.subplots(figsize=(7, 4.8))
+    colors = {"SPGD": "tab:blue", "H-GD": "tab:green", "Torch-GD": "tab:red"}
+    for name, energy_hist in series.items():
+        color = colors.get(name, "k")
+        ax.plot(
+            np.arange(energy_hist.size), energy_hist, color=color, lw=1.8,
+            label=f"{name} (final {energy_hist[-1]:.4f})",
+        )
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Fraction of conserved energy in target")
+    ax.set_title(f"Beam shaping convergence by method — {shape_label}")
+    ax.set_ylim(0, 1.0)
+    ax.grid(True, alpha=0.4)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)

@@ -2,7 +2,7 @@
 """Visualization package: comparison plots, convergence curves, and step GIFs."""
 
 from .plots import plot_results, plot_convergence_all, ALGO_COLORS
-from .plots import plot_beam_shape, plot_shaping_convergence
+from .plots import plot_beam_shape, plot_shaping_convergence, plot_shaping_convergence_comparison
 from .animations import (
     get_frame_indices,
     collect_frame_data,
@@ -19,6 +19,7 @@ __all__ = [
     "ALGO_COLORS",
     "plot_beam_shape",
     "plot_shaping_convergence",
+    "plot_shaping_convergence_comparison",
     "get_frame_indices",
     "collect_frame_data",
     "collect_frame_data_from_snapshots",

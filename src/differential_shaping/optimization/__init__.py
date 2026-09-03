@@ -8,6 +8,8 @@ from .shaping import (
     make_square_target,
     make_triangle_target,
     target_shaping_optimization,
+    spgd_shaping_optimization,
+    hgd_shaping_optimization,
     energy_in_target,
 )
 
@@ -19,5 +21,7 @@ __all__ = [
     "make_square_target",
     "make_triangle_target",
     "target_shaping_optimization",
+    "spgd_shaping_optimization",
+    "hgd_shaping_optimization",
     "energy_in_target",
 ]
