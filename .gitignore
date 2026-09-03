@@ -24,3 +24,7 @@ H_GD_phase_spot_fixed_result.png
 # --- Unrelated user documents (not part of this repository) ---
 docs/传能-光学智能体.pptx
 docs/智能预测式远场光束闭环优化方案_进一步建议.docx
+
+# --- Office/word-processor temp lock files ---
+~$*
+~WRL*.tmp
