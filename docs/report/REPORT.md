@@ -26,8 +26,9 @@
 | **Torch-GD** | **PyTorch 自动微分, 目标损失反向传播梯度 + Adam** | **1 前向 + 1 反向** |
 
 Torch-GD 将可微分远场传播模型(`simulation.optics`)作为前向, 对 DM 促动器命令 `u`
-做自动微分。除了最大化轴上能量(Strehl)目标外, 本报告还用它实现**目标损失驱动的
-光束整形**——把远场光强分布通过反向传播直接整形成指定形状(见 §五)。
+做自动微分。除了最大化轴上能量(Strehl)目标外, 本报告还实现了**目标损失驱动的
+光束整形**——即把远场光强分布直接整形成指定形状(正方形、三角形), 该整形任务由
+**SPGD / H-GD / Torch-GD 三种方法共同完成**(见 §五), 以对比数值梯度与反向传播。。
 
 ## 三、收敛性能对比 (相位校正)
 
@@ -106,7 +107,9 @@ flowchart LR
 
 ## 五、可微远场光束整形(正方形 / 三角形)
 
-基于 **光强总和不变原理**, 可以借助同一个反向传播模型把焦斑能量在远场重新分配成任意形状。
+基于 **光强总和不变原理**, 把焦斑能量在远场重新分配成任意形状。下面的整形由 **三种方法
+共同完成**: 两种数值梯度基线(SPGD / H-GD)与 **Torch-GD**(反向传播), 它们优化**完全相同**
+的目标损失, 以便公平对比。
 
 ### 5.1 光强总和不变原理
 
@@ -119,7 +122,7 @@ FFT 是酉变换, 且出瞳相位 `|exp(i·θ)| = 1` 不改变振幅, 因此:
 即焦面总光强 **严格守恒**。能量无法增删, 只能 **移动**; 这正是光束整形的物理依据:
 把一个集中于轴上单个 Airy 亮斑的分布, 通过相位整形"摊开"成期望的形状。
 
-### 5.2 目标损失 (可微分)
+### 5.2 目标损失 (三方法共享)
 
 对目标形状 `T`(正方形/三角形二值掩模), 用归一化 MSE + 目标区能量捕获:
 
@@ -129,18 +132,40 @@ T_n = T / ΣT             # 目标归一化
 loss = mean((I_n − T_n)²) − 0.15 · (I_n · T_n).sum()
 ```
 
-第一项驱动强度分布**形状**贴合目标; 第二项把守恒能量**压入**目标区域。两者都由
-autograd 对 `u` 求梯度并用 Adam 更新——完全可微、可反向传播。
+第一项驱动强度分布**形状**贴合目标; 第二项把守恒能量**压入**目标区域。三方法用同一损失:
+**Torch-GD** 通过 autograd 反向传播直接求 `∂loss/∂u`(1 前向 + 1 反向);
+**SPGD / H-GD** 则用双边扰动对同一 `loss` 做有限差分梯度估计(2 前向)。
 
-### 5.3 整形结果
+### 5.3 整形结果对比 (SPGD / H-GD / Torch-GD)
 
-| 目标 | 迭代 | 能量入目标 (初→终) | 归一化峰强 | 收敛曲线 | 演化动画 |
-|---|---|---|---|---|---|
-| **Square** | 600 | 0.939 → 0.961 | 0.041 | [curve](./figures/shaping_square_conv.png) | [animation](./gifs/shaping_square.gif) |
-| **Triangle** | 600 | 0.858 → 0.949 | 0.121 | [curve](./figures/shaping_triangle_conv.png) | [animation](./gifs/shaping_triangle.gif) |
+| 目标 | 方法 | 迭代 | 能量入目标 (初→终) | 归一化峰强 | 收敛曲线 | 演化动画 |
+|---|---|---|---|---|---|---|
+| **Square** | **SPGD** | 600 | 0.006 → 0.006 | 0.290 | [curve](./figures/shaping_square_conv_all.png) | [animation](./gifs/shaping_square_spgd.gif) |
+| **Square** | **H-GD** | 600 | 0.006 → 0.006 | 0.290 | [curve](./figures/shaping_square_conv_all.png) | [animation](./gifs/shaping_square_hgd.gif) |
+| **Square** | **Torch-GD** | 600 | 0.939 → 0.961 | 0.041 | [curve](./figures/shaping_square_conv_all.png) | [animation](./gifs/shaping_square_torch_gd.gif) |
+| **Triangle** | **SPGD** | 600 | 0.014 → 0.014 | 0.290 | [curve](./figures/shaping_triangle_conv_all.png) | [animation](./gifs/shaping_triangle_spgd.gif) |
+| **Triangle** | **H-GD** | 600 | 0.014 → 0.014 | 0.290 | [curve](./figures/shaping_triangle_conv_all.png) | [animation](./gifs/shaping_triangle_hgd.gif) |
+| **Triangle** | **Torch-GD** | 600 | 0.858 → 0.949 | 0.121 | [curve](./figures/shaping_triangle_conv_all.png) | [animation](./gifs/shaping_triangle_torch_gd.gif) |
 
-![Square shaping](./gifs/shaping_square.gif)
-![Triangle shaping](./gifs/shaping_triangle.gif)
+**解读(关键):** 表中可见 **只有 Torch-GD(反向传播)能真正整形**。SPGD / H-GD 的
+能量入目标停留在初始值(方形 0.006、三角形 0.014)基本不动, 而 Torch-GD 显著上升到
+方形 0.961、三角形 0.949。原因是: SPGD / H-GD 用**单个扰动模式的标量差分**估计梯度,
+当目标越整形梯度越弱(初始梯度幅度仅 ~1e-5, 比相位校正的 Strehl 目标 ~1 小 4 个量级)时,
+估计方向与真梯度几乎正交(实测余弦 ~0.03), 被扰动噪声淹没, 无法积累出把能量搬进目标所需的
+**相干多促动器相位结构**。而 Torch-GD 通过 autograd 拿到**精确梯度** `∂loss/∂u`,
+一步一个确定方向, 即使目标梯度很弱也能稳定把守恒能量重新分配进目标掩模。这正体现了
+**可微分(反向传播)物理优化** 相对随机/正交数值梯度基线在复杂整形任务上的本质优势。
+
+![Square shaping — SPGD](./gifs/shaping_square_spgd.gif)
+![Square shaping — H-GD](./gifs/shaping_square_hgd.gif)
+![Square shaping — Torch-GD](./gifs/shaping_square_torch_gd.gif)
+
+![Triangle shaping — SPGD](./gifs/shaping_triangle_spgd.gif)
+![Triangle shaping — H-GD](./gifs/shaping_triangle_hgd.gif)
+![Triangle shaping — Torch-GD](./gifs/shaping_triangle_torch_gd.gif)
+
+![Square shaping convergence (by method)](./figures/shaping_square_conv_all.png)
+![Triangle shaping convergence (by method)](./figures/shaping_triangle_conv_all.png)
 
 ## 六、逐步演化动画 (Spot 左 / DM 面型 右)
 

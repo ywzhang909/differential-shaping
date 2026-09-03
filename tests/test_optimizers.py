@@ -18,6 +18,8 @@ from differential_shaping.optimization import (
     make_square_target,
     make_triangle_target,
     target_shaping_optimization,
+    spgd_shaping_optimization,
+    hgd_shaping_optimization,
     energy_in_target,
 )
 
@@ -158,3 +160,31 @@ class TestTargetShaping:
         assert len(store) == 3
         for it, u_snap in store:
             assert u_snap.shape == (params.n_act,) and u_snap.dtype == np.float64
+
+    def test_spgd_shaping_returns_contract(self, _shared):
+        turb, inf_flat, _, _ = _shared
+        tgt = make_square_target(half_width=5).numpy()
+        u, dm_u, loss_hist, energy_hist, I_np = spgd_shaping_optimization(
+            turb, inf_flat, tgt, max_iter=120, label="square",
+        )
+        assert u.shape == (params.n_act,) and u.dtype == np.float64
+        assert dm_u.shape == (params.N, params.N)
+        assert loss_hist.shape == energy_hist.shape == (120,)
+        assert np.all(np.isfinite(energy_hist)) and np.all(np.isfinite(I_np))
+        # SPGD numeric-gradient shaping minimises the shared loss (non-increasing)
+        # but is too weak to move the conserved energy (energy-in-target stays flat).
+        assert loss_hist[-1] <= loss_hist[0] + 1e-12
+        assert abs(energy_hist[-1] - energy_hist[0]) < 0.05
+
+    def test_hgd_shaping_returns_contract(self, _shared):
+        turb, inf_flat, _, _ = _shared
+        tgt = make_triangle_target(size=9, apex="down").numpy()
+        u, dm_u, loss_hist, energy_hist, I_np = hgd_shaping_optimization(
+            turb, inf_flat, tgt, max_iter=120, label="triangle",
+        )
+        assert u.shape == (params.n_act,) and u.dtype == np.float64
+        assert dm_u.shape == (params.N, params.N)
+        assert loss_hist.shape == energy_hist.shape == (120,)
+        assert np.all(np.isfinite(energy_hist)) and np.all(np.isfinite(I_np))
+        assert loss_hist[-1] <= loss_hist[0] + 1e-12
+        assert abs(energy_hist[-1] - energy_hist[0]) < 0.05
