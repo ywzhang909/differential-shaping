@@ -195,3 +195,70 @@ def plot_results(
     fig.tight_layout()
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# Target-shaping specific plots
+# ---------------------------------------------------------------------------
+def plot_beam_shape(
+    I_np: np.ndarray,
+    target: np.ndarray,
+    shape_label: str,
+    out_path: Path,
+    iteration: int | None = None,
+    contour_level: float = 0.35,
+) -> None:
+    """Render the shaped far-field intensity with the target contour overlaid.
+
+    Uses a linear, max-normalised color map so the *shape* of the bright region
+    (square / triangle) is clearly visible, and draws the binary target as a
+    white contour.  ``I_np`` is the max-normalised far-field intensity to plot.
+    """
+    I_n = I_np / (I_np.max() + 1e-12)
+    target_b = np.asarray(target).astype(bool)
+
+    fig, ax = plt.subplots(figsize=(6.4, 6))
+    im = ax.imshow(
+        I_n,
+        origin="lower",
+        cmap="hot",
+        vmin=0,
+        vmax=1,
+        interpolation="nearest",
+    )
+    # target contour (only the boundary, from the binary mask)
+    if target_b.any():
+        ax.contour(target_b.astype(float), levels=[0.5], colors=["w"], linewidths=1.6)
+    title = f"Far-field ⇒ {shape_label}"
+    if iteration is not None:
+        title += f" (iter {iteration})"
+    ax.set_title(title)
+    ax.set_xlabel(r"$x/(\lambda f/D)$")
+    ax.set_ylabel(r"$y/(\lambda f/D)$")
+    ax.set_aspect("equal")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Normalised intensity")
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_shaping_convergence(
+    energy_hist: np.ndarray,
+    shape_label: str,
+    out_path: Path,
+) -> None:
+    """Plot the conservation-respecting energy-in-target convergence curve."""
+    fig, ax = plt.subplots(figsize=(7, 4.5))
+    ax.plot(np.arange(energy_hist.size), energy_hist, color="tab:red", lw=1.8,
+            label=f"energy in {shape_label} target")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Fraction of conserved energy in target")
+    ax.set_title(f"Beam shaping convergence — {shape_label}")
+    ax.set_ylim(0, 1.0)
+    ax.grid(True, alpha=0.4)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)

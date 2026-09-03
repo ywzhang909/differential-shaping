@@ -20,7 +20,14 @@ import matplotlib.pyplot as plt
 from PIL import Image
 
 from ..params import pad_factor_show, spot_half_width_lamD, N
-from ..simulation.optics import far_field_intensity_padded, crop_center, compute_metrics, to_numpy as _to_np, to_torch as _to_t
+from ..simulation.optics import (
+    far_field_intensity_padded,
+    far_field_intensity_metric,
+    crop_center,
+    compute_metrics,
+    to_numpy as _to_np,
+    to_torch as _to_t,
+)
 from ..simulation.pupil import pupil, extent_pupil_mm
 
 
@@ -238,6 +245,81 @@ def write_step_gif(
         out_path,
         save_all=True,
         append_images=pil_frames[1:],
+        duration=duration_ms,
+        loop=0,
+        optimize=True,
+    )
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Beam-shaping evolution: far-field intensity (with target contour) only
+# ---------------------------------------------------------------------------
+def build_shaping_frames(
+    phase_series: list[np.ndarray],
+    target: np.ndarray,
+    shape_label: str,
+    iters: list[int],
+    energy_series: np.ndarray,
+) -> list[Image.Image]:
+    """Render a stepped sequence of the far field reshaping into ``target``.
+
+    Each frame shows the max-normalised (linear) far-field intensity with the
+    binary target contour overlaid in white, plus an energy-in-target legend.
+
+    Args:
+        phase_series: list of (N, N) phase screens (already includes DM) at
+            each requested iteration.
+        target:       (N, N) binary target mask.
+        shape_label:  e.g. "square" / "triangle".
+        iters:        iteration index for each frame (len == len(phase_series)).
+        energy_series: full-length energy-in-target history for metric lookup.
+
+    Returns:
+        list of PIL frames ready for ``write_shaping_gif``.
+    """
+    pil_frames: list[Image.Image] = []
+    target_b = np.asarray(target).astype(bool)
+    for k, phase in enumerate(phase_series):
+        # Max-normalised linear far-field intensity.
+        I = _to_np(far_field_intensity_metric(_to_t(phase)))
+        I_n = I / (I.max() + 1e-12)
+        it = iters[k]
+        energy = float(energy_series[it]) if it < len(energy_series) else float(np.nan)
+
+        fig, ax = plt.subplots(figsize=(5.6, 5))
+        im = ax.imshow(I_n, origin="lower", cmap="hot", vmin=0, vmax=1,
+                       interpolation="nearest")
+        if target_b.any():
+            ax.contour(target_b.astype(float), levels=[0.5], colors=["w"], linewidths=1.4)
+        ax.set_title(f"{shape_label} shaping — iter {it}\nenergy in target = {energy:.3f}")
+        ax.set_xlabel(r"$x/(\lambda f/D)$")
+        ax.set_ylabel(r"$y/(\lambda f/D)$")
+        ax.set_aspect("equal")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="Normalised intensity")
+        fig.tight_layout()
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        buf.seek(0)
+        pil_frames.append(Image.open(buf).convert("P", palette=Image.ADAPTIVE, colors=256))
+    return pil_frames
+
+
+def write_shaping_gif(
+    frames: list[Image.Image],
+    out_path: Path,
+    duration_ms: int = 200,
+) -> Path:
+    """Assemble pre-rendered shaping frames into a looped GIF."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if not frames:
+        raise ValueError("no shaping frames to assemble")
+    frames[0].save(
+        out_path,
+        save_all=True,
+        append_images=frames[1:],
         duration=duration_ms,
         loop=0,
         optimize=True,
