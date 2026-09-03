@@ -1,0 +1,26 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+
+# --- Virtual environment / tooling ---
+.venv/
+venv/
+.idea/
+.vscode/
+*.log
+
+# --- Generated artifacts (regenerable) ---
+# Per-step GIF frame PNGs are intermediate build products of run_full.py
+docs/report/gifs/frames/
+
+# Original single-file reference output image (regenerate with the script)
+H_GD_phase_spot_fixed_result.png
+
+# --- Unrelated user documents (not part of this repository) ---
+docs/传能-光学智能体.pptx
+docs/智能预测式远场光束闭环优化方案_进一步建议.docx
