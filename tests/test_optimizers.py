@@ -15,6 +15,10 @@ from differential_shaping.optimization import (
     spgd_optimization,
     hgd_optimization,
     torch_gd_optimization,
+    make_square_target,
+    make_triangle_target,
+    target_shaping_optimization,
+    energy_in_target,
 )
 
 
@@ -95,3 +99,62 @@ class TestOptimizerRegression:
         assert len(store) == len(frames)
         for it, u_snap in store:
             assert u_snap.shape == (params.n_act,)
+
+
+class TestTargetShaping:
+    def test_square_target_geometry(self):
+        sq = make_square_target(half_width=6)
+        assert sq.shape == (params.N, params.N)
+        assert sq.dtype == torch.float32
+        # a 13x13 square centred at (N//2, N//2)
+        c = params.N // 2
+        assert sq[c, c].item() == 1.0
+        assert sq[c, c + 6].item() == 1.0 and sq[c, c + 7].item() == 0.0
+        assert int(sq.sum().item()) == 13 * 13
+
+    def test_triangle_target_geometry(self):
+        tri = make_triangle_target(size=11, apex="up")
+        assert tri.shape == (params.N, params.N)
+        assert tri.dtype == torch.float32
+        c = params.N // 2
+        # apex-up triangle: top tip present, far outside (bottom corners) absent
+        assert tri[c - 5, c].item() == 1.0   # apex (top)
+        assert tri[c + 5, c].item() == 1.0   # base centre (bottom)
+        assert tri[c + 5, c + 6].item() == 0.0  # outside triangle base half-width
+        area = int(tri.sum().item())
+        assert 0 < area < 11 * 11  # triangle is a proper subset of its box
+
+    def test_energy_in_target_bounds(self):
+        sq = make_square_target(half_width=6)
+        # A uniform field has exactly area/total = 169/128^2 energy in target.
+        uniform = torch.ones(params.N, params.N, dtype=torch.float32)
+        e = energy_in_target(uniform, sq)
+        assert abs(float(e) - 169 / (params.N * params.N)) < 1e-3
+
+    def test_shaping_converges(self, _shared):
+        turb, inf_flat, _, _ = _shared
+        tgt = make_square_target(half_width=5)
+        res = target_shaping_optimization(
+            turb, inf_flat, tgt.numpy(), max_iter=120, lr=0.02,
+            seed=params.seed_spgd, label="square",
+        )
+        u, dm_u, loss_hist, energy_hist, I_np = res
+        assert isinstance(u, np.ndarray) and u.shape == (params.n_act,)
+        assert dm_u.shape == (params.N, params.N)
+        assert loss_hist.shape == energy_hist.shape == (120,)
+        assert np.all(np.isfinite(I_np))
+        # The differentiable shapber should push more conserved energy into the target.
+        assert energy_hist[-1] > energy_hist[0] - 1e-6
+        assert I_np.shape == (params.N, params.N)
+
+    def test_shaping_snapshot_store(self, _shared):
+        turb, inf_flat, _, _ = _shared
+        tgt = make_triangle_target(size=9, apex="up")
+        store = []
+        target_shaping_optimization(
+            turb, inf_flat, tgt.numpy(), max_iter=20, seed=params.seed_spgd,
+            snapshot_indices=[0, 5, 19], snapshot_store=store, label="triangle",
+        )
+        assert len(store) == 3
+        for it, u_snap in store:
+            assert u_snap.shape == (params.n_act,) and u_snap.dtype == np.float64
