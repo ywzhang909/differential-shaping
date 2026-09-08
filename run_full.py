@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Full-pipeline entry point : run SPGD / H-GD / Torch-GD, then the target-loss
 beam shaper (square / triangle) with all three methods, and produce the
@@ -33,32 +32,31 @@ import numpy as np
 from loguru import logger
 
 from differential_shaping import params
-from differential_shaping.simulation import (
-    generate_turbulence_phase,
-    generate_influence_functions,
-    compute_metrics,
-    pupil_mask,
-)
 from differential_shaping.optimization import (
-    spgd_optimization,
     hgd_optimization,
-    torch_gd_optimization,
+    hgd_shaping_optimization,
     make_square_target,
     make_triangle_target,
-    target_shaping_optimization,
+    spgd_optimization,
     spgd_shaping_optimization,
-    hgd_shaping_optimization,
+    target_shaping_optimization,
+    torch_gd_optimization,
+)
+from differential_shaping.simulation import (
+    compute_metrics,
+    generate_influence_functions,
+    generate_turbulence_phase,
+    pupil_mask,
 )
 from differential_shaping.visualization import (
-    get_frame_indices,
-    collect_frame_data_from_snapshots,
-    write_step_gif,
-    plot_convergence_all,
-    plot_beam_shape,
-    plot_shaping_convergence,
-    plot_shaping_convergence_comparison,
     build_shaping_frames,
+    collect_frame_data_from_snapshots,
+    get_frame_indices,
+    plot_beam_shape,
+    plot_convergence_all,
+    plot_shaping_convergence_comparison,
     write_shaping_gif,
+    write_step_gif,
 )
 
 PROJECT_ROOT = Path(__file__).parent
@@ -77,7 +75,7 @@ TORCH_LR = 0.01
 SHAPING_ITERS = 600
 SHAPING_LR = 0.02
 SHAPER_TARGETS = {
-    "square": make_square_target(half_width=6),      # 13 x 13 px centred on the focal plane
+    "square": make_square_target(half_width=6),  # 13 x 13 px centred on the focal plane
     "triangle": make_triangle_target(size=11, apex="up"),  # 11 px triangle
 }
 
@@ -94,7 +92,9 @@ def _run_optimizer(
 ) -> dict:
     """Run one optimizer and return results."""
     logger.info(f"Running {name} ...")
-    frames_idx = get_frame_indices(params.max_iter if name != "Torch-GD" else TORCH_ITERS)
+    frames_idx = get_frame_indices(
+        params.max_iter if name != "Torch-GD" else TORCH_ITERS
+    )
     snapshots: list[tuple[int, np.ndarray]] = []
     if name == "SPGD":
         u, dm_u, J_hist, SR_hist = spgd_optimization(
@@ -116,7 +116,13 @@ def _run_optimizer(
         )
     else:
         raise ValueError(f"Unknown optimizer: {name}")
-    return {"u": u, "dm_u": dm_u, "J_hist": J_hist, "SR_hist": SR_hist, "snapshots": snapshots}
+    return {
+        "u": u,
+        "dm_u": dm_u,
+        "J_hist": J_hist,
+        "SR_hist": SR_hist,
+        "snapshots": snapshots,
+    }
 
 
 def _run_one_shaper(
@@ -131,23 +137,44 @@ def _run_one_shaper(
     snapshots: list[tuple[int, np.ndarray]] = []
     if method == "SPGD":
         u, dm_u, loss_hist, eng_hist, I_np = spgd_shaping_optimization(
-            turb_phase, inf_flat, target_np, max_iter=SHAPING_ITERS,
-            label=shape, snapshot_indices=frames_idx, snapshot_store=snapshots,
+            turb_phase,
+            inf_flat,
+            target_np,
+            max_iter=SHAPING_ITERS,
+            label=shape,
+            snapshot_indices=frames_idx,
+            snapshot_store=snapshots,
         )
     elif method == "H-GD":
         u, dm_u, loss_hist, eng_hist, I_np = hgd_shaping_optimization(
-            turb_phase, inf_flat, target_np, max_iter=SHAPING_ITERS,
-            label=shape, snapshot_indices=frames_idx, snapshot_store=snapshots,
+            turb_phase,
+            inf_flat,
+            target_np,
+            max_iter=SHAPING_ITERS,
+            label=shape,
+            snapshot_indices=frames_idx,
+            snapshot_store=snapshots,
         )
     else:  # Torch-GD (backprop)
         u, dm_u, loss_hist, eng_hist, I_np = target_shaping_optimization(
-            turb_phase, inf_flat, target_np, max_iter=SHAPING_ITERS, lr=SHAPING_LR,
-            seed=params.seed_spgd, label=shape,
-            snapshot_indices=frames_idx, snapshot_store=snapshots,
+            turb_phase,
+            inf_flat,
+            target_np,
+            max_iter=SHAPING_ITERS,
+            lr=SHAPING_LR,
+            seed=params.seed_spgd,
+            label=shape,
+            snapshot_indices=frames_idx,
+            snapshot_store=snapshots,
         )
     return {
-        "method": method, "shape": shape, "u": u, "dm_u": dm_u,
-        "loss_hist": loss_hist, "energy_hist": eng_hist, "I_np": I_np,
+        "method": method,
+        "shape": shape,
+        "u": u,
+        "dm_u": dm_u,
+        "loss_hist": loss_hist,
+        "energy_hist": eng_hist,
+        "I_np": I_np,
         "snapshots": snapshots,
     }
 
@@ -180,7 +207,9 @@ def _run_shaper_methods(
 
         # Final beam shape (intensity + target contour) per method.
         plot_beam_shape(
-            res["I_np"], target_np, f"{shape} ({method})",
+            res["I_np"],
+            target_np,
+            f"{shape} ({method})",
             FIGURES_DIR / f"shaping_{shape}_{tag}.png",
         )
         # Reshaping step GIF (far-field intensity with target contour) per method.
@@ -434,7 +463,9 @@ loss = mean((I_n − T_n)²) − 0.15 · (I_n · T_n).sum()
 
 
 def main() -> None:
-    logger.info("=== H-GD / SPGD / Torch-GD AO + differential beam shaping pipeline ===")
+    logger.info(
+        "=== H-GD / SPGD / Torch-GD AO + differential beam shaping pipeline ==="
+    )
 
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     FIGURES_DIR.mkdir(parents=True, exist_ok=True)
@@ -442,7 +473,11 @@ def main() -> None:
 
     # 1. Shared turbulence field + DM.
     turb_phase = generate_turbulence_phase(
-        params.N, params.pixel_size, params.r0, params.target_phase_rms, params.seed_phase
+        params.N,
+        params.pixel_size,
+        params.r0,
+        params.target_phase_rms,
+        params.seed_phase,
     )
     logger.info(f"Turbulence pupil RMS = {float(turb_phase[pupil_mask].std()):.6f} rad")
 
@@ -472,10 +507,17 @@ def main() -> None:
             params.max_iter if name != "Torch-GD" else TORCH_ITERS
         )
         frames = collect_frame_data_from_snapshots(
-            turb_phase, inf_flat, res["snapshots"], res["J_hist"], res["SR_hist"], frames_idx
+            turb_phase,
+            inf_flat,
+            res["snapshots"],
+            res["J_hist"],
+            res["SR_hist"],
+            frames_idx,
         )
         gif_path = GIFS_DIR / f"steps_{gif_name_map[name]}.gif"
-        write_step_gif(name, frames, gif_path, duration_ms=200, frame_dir=GIFS_DIR / "frames")
+        write_step_gif(
+            name, frames, gif_path, duration_ms=200, frame_dir=GIFS_DIR / "frames"
+        )
         logger.info(f"GIF saved: {gif_path} ({len(frames)} frames)")
 
     # 4. Beam shaping (square, triangle) with all three methods.

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Turbulence phase screen generation (Kolmogorov-like spectral synthesis).
 
@@ -17,10 +16,9 @@ the same seed (bitwise-identical tensors).
 import torch
 import torch.fft
 
-from ..params import N, pixel_size, r0, target_phase_rms
 from .pupil import pupil_mask
 
-__all__ = ["remove_piston", "generate_turbulence_phase"]
+__all__ = ["generate_turbulence_phase", "generate_phase_screen", "remove_piston"]
 
 _DEVICE = torch.device("cpu")
 _DTYPE = torch.float32
@@ -33,6 +31,64 @@ def remove_piston(phase: torch.Tensor) -> torch.Tensor:
     out = out - piston
     out[~pupil_mask] = 0.0
     return out
+
+
+def generate_phase_screen(
+    N: int,
+    pixel_size: float,
+    r0: float,
+    seed: int | None = None,
+) -> torch.Tensor:
+    """Synthesise a raw Kolmogorov-like phase screen at arbitrary size ``(N, N)``.
+
+    Unlike :func:`generate_turbulence_phase`, this does **not** apply the
+    fixed-size pupil mask or re-scale the pupil RMS — it returns the plain
+    spectral-synthesis result.  It is intended for building screens larger
+    than the pupil (e.g. a big "frozen-flow" screen from which pupil-sized
+    windows are cropped).  Piston is still removed over the *whole* screen.
+
+    Parameters
+    ----------
+    N : int
+        Grid size (pixels per side).
+    pixel_size : float
+        Pupil-plane sampling pitch (m).
+    r0 : float
+        Fried parameter (m).
+    seed : int | None, optional
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    torch.Tensor
+        Float32 tensor of shape ``(N, N)`` on CPU.
+    """
+    gen = torch.Generator(device=_DEVICE)
+    if seed is not None:
+        gen.manual_seed(seed)
+
+    D_local = N * pixel_size
+    df = 1.0 / D_local
+
+    fx = torch.fft.fftfreq(N, d=pixel_size, device=_DEVICE, dtype=_DTYPE)
+    fy = torch.fft.fftfreq(N, d=pixel_size, device=_DEVICE, dtype=_DTYPE)
+    FX, FY = torch.meshgrid(fx, fy, indexing="xy")
+    fr = torch.sqrt(FX**2 + FY**2)
+
+    PSD = torch.zeros_like(fr)
+    mask = fr > 0
+    PSD[mask] = 0.023 * r0 ** (-5.0 / 3.0) * fr[mask] ** (-11.0 / 3.0)
+
+    # Complex noise via seeded generator (two real draws combined).
+    noise = (
+        torch.randn((N, N), generator=gen, device=_DEVICE, dtype=_DTYPE)
+        + 1j * torch.randn((N, N), generator=gen, device=_DEVICE, dtype=_DTYPE)
+    ).to(torch.complex64)
+
+    phase_fft = torch.sqrt(PSD) * noise * df
+    phase = torch.real(torch.fft.ifft2(phase_fft)) * (N**2)
+
+    return phase - phase.mean()
 
 
 def generate_turbulence_phase(
@@ -67,39 +123,13 @@ def generate_turbulence_phase(
     torch.Tensor
         Float32 tensor of shape ``(N, N)`` on CPU.
     """
-    gen = torch.Generator(device=_DEVICE)
-    if seed is not None:
-        gen.manual_seed(seed)
-
-    D_local = N * pixel_size
-    df = 1.0 / D_local
-
-    fx = torch.fft.fftfreq(N, d=pixel_size, device=_DEVICE, dtype=_DTYPE)
-    fy = torch.fft.fftfreq(N, d=pixel_size, device=_DEVICE, dtype=_DTYPE)
-    FX, FY = torch.meshgrid(fx, fy, indexing="xy")
-    fr = torch.sqrt(FX**2 + FY**2)
-
-    PSD = torch.zeros_like(fr)
-    mask = fr > 0
-    PSD[mask] = 0.023 * r0 ** (-5.0 / 3.0) * fr[mask] ** (-11.0 / 3.0)
-
-    # Complex noise via seeded generator (two real draws combined).
-    noise = (
-        torch.randn((N, N), generator=gen, device=_DEVICE, dtype=_DTYPE)
-        + 1j
-        * torch.randn((N, N), generator=gen, device=_DEVICE, dtype=_DTYPE)
-    ).to(torch.complex64)
-
-    phase_fft = torch.sqrt(PSD) * noise * df
-    phase = torch.real(torch.fft.ifft2(phase_fft)) * (N**2)
-
+    phase = generate_phase_screen(N, pixel_size, r0, seed)
     phase = remove_piston(phase)
 
     raw_rms = phase[pupil_mask].std()
     if raw_rms <= 1e-30:
         raise RuntimeError(
-            "Generated phase screen has near-zero RMS; "
-            "check PSD/sampling parameters."
+            "Generated phase screen has near-zero RMS; check PSD/sampling parameters."
         )
     phase = phase * (torch.tensor(target_rms, dtype=_DTYPE, device=_DEVICE) / raw_rms)
     return phase

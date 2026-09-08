@@ -11,7 +11,6 @@ from differential_shaping.simulation import (
     generate_influence_functions,
     remove_piston,
     compute_metrics,
-    far_field_intensity_metric,
     far_field_intensity_padded,
     crop_center,
     dm_surface,
@@ -47,7 +46,11 @@ class TestPupil:
 class TestTurbulence:
     def test_shape_dtype_device(self):
         tp = generate_turbulence_phase(
-            params.N, params.pixel_size, params.r0, params.target_phase_rms, params.seed_phase
+            params.N,
+            params.pixel_size,
+            params.r0,
+            params.target_phase_rms,
+            params.seed_phase,
         )
         assert tp.shape == (params.N, params.N)
         assert tp.dtype == torch.float32
@@ -64,20 +67,32 @@ class TestTurbulence:
 
     def test_pupil_rms_matches_target(self):
         tp = generate_turbulence_phase(
-            params.N, params.pixel_size, params.r0, params.target_phase_rms, params.seed_phase
+            params.N,
+            params.pixel_size,
+            params.r0,
+            params.target_phase_rms,
+            params.seed_phase,
         )
         rms = float(tp[pupil_mask].std())
         assert rms == pytest.approx(params.target_phase_rms, abs=1e-3)
 
     def test_outside_pupil_is_zero(self):
         tp = generate_turbulence_phase(
-            params.N, params.pixel_size, params.r0, params.target_phase_rms, params.seed_phase
+            params.N,
+            params.pixel_size,
+            params.r0,
+            params.target_phase_rms,
+            params.seed_phase,
         )
         assert bool((tp[~pupil_mask] == 0.0).all())
 
     def test_remove_piston(self):
         tp = generate_turbulence_phase(
-            params.N, params.pixel_size, params.r0, params.target_phase_rms, params.seed_phase
+            params.N,
+            params.pixel_size,
+            params.r0,
+            params.target_phase_rms,
+            params.seed_phase,
         )
         rp = remove_piston(tp)
         assert torch.equal(rp[~pupil_mask], torch.zeros_like(rp[~pupil_mask]))
@@ -109,15 +124,19 @@ class TestDM:
 class TestOptics:
     def _turb(self):
         return generate_turbulence_phase(
-            params.N, params.pixel_size, params.r0, params.target_phase_rms, params.seed_phase
+            params.N,
+            params.pixel_size,
+            params.r0,
+            params.target_phase_rms,
+            params.seed_phase,
         )
 
     def test_compute_metrics_types_and_ranges(self):
         tp = self._turb()
-        J, SR, I = compute_metrics(tp)
+        J, SR, intensity = compute_metrics(tp)
         assert J.dtype == torch.float32
         assert SR.dtype == torch.float32
-        assert I.shape == (params.N, params.N)
+        assert intensity.shape == (params.N, params.N)
         # no correction at r0=60um / D=1.28mm: a degraded but sensible SR
         assert 0.0 < float(SR) < 1.0
         assert float(SR) > 0.1
@@ -162,10 +181,10 @@ class TestOptics:
         dm = dm_surface(u, inf_flat)
         # Gaussian-weighted on-axis energy (maximise -> minimise negative)
         E = pupil_float_t * torch.exp(1j * remove_piston(tp + dm))
-        I = torch.abs(torch.fft.fftshift(torch.fft.fft2(E))) ** 2
+        intensity = torch.abs(torch.fft.fftshift(torch.fft.fft2(E))) ** 2
         from differential_shaping.simulation import gaussian_window
 
-        loss = -(gaussian_window * I).sum()
+        loss = -(gaussian_window * intensity).sum()
         loss.backward()
         assert u.grad is not None
         assert u.grad.shape == (params.n_act,)

@@ -13,22 +13,26 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
-import numpy as np
 import matplotlib
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
 from PIL import Image
 
-from ..params import pad_factor_show, spot_half_width_lamD, N
+from ..params import N, pad_factor_show, spot_half_width_lamD
 from ..simulation.optics import (
-    far_field_intensity_padded,
-    far_field_intensity_metric,
     crop_center,
-    compute_metrics,
+    far_field_intensity_metric,
+    far_field_intensity_padded,
+)
+from ..simulation.optics import (
     to_numpy as _to_np,
+)
+from ..simulation.optics import (
     to_torch as _to_t,
 )
-from ..simulation.pupil import pupil, extent_pupil_mm
+from ..simulation.pupil import extent_pupil_mm, pupil
+
+matplotlib.use("Agg")
 
 
 # ---------------------------------------------------------------------------
@@ -64,9 +68,9 @@ def _dm_at(u_it: np.ndarray, inf_flat: np.ndarray) -> np.ndarray:
 def collect_frame_data(
     turb_phase: np.ndarray,
     inf_flat: np.ndarray,
-    u_history: np.ndarray,       # (n_frames, n_act) sampled actuator commands
-    J_history: np.ndarray,       # array indexed by iteration for metric lookup
-    SR_history: np.ndarray,      # array indexed by iteration
+    u_history: np.ndarray,  # (n_frames, n_act) sampled actuator commands
+    J_history: np.ndarray,  # array indexed by iteration for metric lookup
+    SR_history: np.ndarray,  # array indexed by iteration
     frame_idx: list[int],
 ) -> list[dict]:
     """Build per-frame render data for the numpy optimisers (SPGD / H-GD).
@@ -81,9 +85,9 @@ def collect_frame_data(
     Returns:
         list of dicts, one per frame: {step, dm_u, phase, J, SR}.
     """
-    if hasattr(turb_phase, 'detach'):
+    if hasattr(turb_phase, "detach"):
         turb_phase = _to_np(turb_phase)
-    if hasattr(inf_flat, 'detach'):
+    if hasattr(inf_flat, "detach"):
         inf_flat = _to_np(inf_flat)
     data: list[dict] = []
     for k, it in enumerate(frame_idx):
@@ -91,7 +95,9 @@ def collect_frame_data(
         phase_k = turb_phase + dm_k
         J_k = float(J_history[it])
         SR_k = float(SR_history[it])
-        data.append({"step": int(it), "dm_u": dm_k, "phase": phase_k, "J": J_k, "SR": SR_k})
+        data.append(
+            {"step": int(it), "dm_u": dm_k, "phase": phase_k, "J": J_k, "SR": SR_k}
+        )
     return data
 
 
@@ -122,9 +128,9 @@ def collect_frame_data_from_snapshots(
                 break
         return best
 
-    if hasattr(turb_phase, 'detach'):
+    if hasattr(turb_phase, "detach"):
         turb_phase = _to_np(turb_phase)
-    if hasattr(inf_flat, 'detach'):
+    if hasattr(inf_flat, "detach"):
         inf_flat = _to_np(inf_flat)
     data: list[dict] = []
     for it in frame_idx:
@@ -133,7 +139,9 @@ def collect_frame_data_from_snapshots(
         phase_it = turb_phase + dm_it
         J_it = float(J_history[it]) if it < len(J_history) else float(np.nan)
         SR_it = float(SR_history[it]) if it < len(SR_history) else float(np.nan)
-        data.append({"step": int(it), "dm_u": dm_it, "phase": phase_it, "J": J_it, "SR": SR_it})
+        data.append(
+            {"step": int(it), "dm_u": dm_it, "phase": phase_it, "J": J_it, "SR": SR_it}
+        )
     return data
 
 
@@ -158,12 +166,20 @@ def render_combined_frame(
     # --- spot panel (reuse the exact display math from plots.py) -----------
     I0_pad = _to_np(far_field_intensity_padded(_to_t(np.zeros_like(frame["phase"]))))
     I0_pad_peak = float(np.max(I0_pad))
-    I_rel = _to_np(far_field_intensity_padded(_to_t(frame["phase"]))) / (I0_pad_peak + 1e-30)
-    I_db_raw, extent = crop_center(_to_t(10 * np.log10(np.maximum(I_rel, 1e-8))), half_pix)
+    I_rel = _to_np(far_field_intensity_padded(_to_t(frame["phase"]))) / (
+        I0_pad_peak + 1e-30
+    )
+    I_db_raw, extent = crop_center(
+        _to_t(10 * np.log10(np.maximum(I_rel, 1e-8))), half_pix
+    )
     I_db = _to_np(I_db_raw)
 
     dm_show = np.ma.array(frame["dm_u"], mask=~pupil)
-    dm_lim = max(float(np.max(np.abs(dm_show[~dm_show.mask]))), 1e-6) if dm_show.count() else 1.0
+    dm_lim = (
+        max(float(np.max(np.abs(dm_show[~dm_show.mask]))), 1e-6)
+        if dm_show.count()
+        else 1.0
+    )
 
     fig, (ax_spot, ax_dm) = plt.subplots(
         1, 2, figsize=(12, 5), gridspec_kw={"width_ratios": [1, 1]}
@@ -172,11 +188,19 @@ def render_combined_frame(
     im_spot = ax_spot.imshow(
         I_db, extent=extent, origin="lower", cmap="jet", vmin=-40, vmax=0
     )
-    ax_spot.set_title(f"{optimizer_name} iter {frame['step']}\nJ={frame['J']:.2f} pix, SR={frame['SR']:.3f}")
+    ax_spot.set_title(
+        f"{optimizer_name} iter {frame['step']}\nJ={frame['J']:.2f} pix, SR={frame['SR']:.3f}"
+    )
     ax_spot.set_xlabel(r"$x/(\lambda f/D)$")
     ax_spot.set_ylabel(r"$y/(\lambda f/D)$")
     ax_spot.set_aspect("equal")
-    plt.colorbar(im_spot, ax=ax_spot, fraction=0.046, pad=0.04, label="Intensity / ideal peak (dB)")
+    plt.colorbar(
+        im_spot,
+        ax=ax_spot,
+        fraction=0.046,
+        pad=0.04,
+        label="Intensity / ideal peak (dB)",
+    )
 
     im_dm = ax_dm.imshow(
         dm_show,
@@ -237,7 +261,12 @@ def write_step_gif(
 
     pil_frames: list[Image.Image] = []
     for i, fr in enumerate(frames):
-        png_path = frame_dir / f"{optimizer_name.lower().replace('-', '')}_frame_{fr['step']:05d}.png" if frame_dir else None
+        png_path = (
+            frame_dir
+            / f"{optimizer_name.lower().replace('-', '')}_frame_{fr['step']:05d}.png"
+            if frame_dir
+            else None
+        )
         pil = render_combined_frame(fr, optimizer_name, out_png=png_path)
         pil_frames.append(pil.convert("P", palette=Image.ADAPTIVE, colors=256))
 
@@ -282,17 +311,22 @@ def build_shaping_frames(
     target_b = np.asarray(target).astype(bool)
     for k, phase in enumerate(phase_series):
         # Max-normalised linear far-field intensity.
-        I = _to_np(far_field_intensity_metric(_to_t(phase)))
-        I_n = I / (I.max() + 1e-12)
+        intensity = _to_np(far_field_intensity_metric(_to_t(phase)))
+        I_n = intensity / (intensity.max() + 1e-12)
         it = iters[k]
         energy = float(energy_series[it]) if it < len(energy_series) else float(np.nan)
 
         fig, ax = plt.subplots(figsize=(5.6, 5))
-        im = ax.imshow(I_n, origin="lower", cmap="hot", vmin=0, vmax=1,
-                       interpolation="nearest")
+        im = ax.imshow(
+            I_n, origin="lower", cmap="hot", vmin=0, vmax=1, interpolation="nearest"
+        )
         if target_b.any():
-            ax.contour(target_b.astype(float), levels=[0.5], colors=["w"], linewidths=1.4)
-        ax.set_title(f"{shape_label} shaping — iter {it}\nenergy in target = {energy:.3f}")
+            ax.contour(
+                target_b.astype(float), levels=[0.5], colors=["w"], linewidths=1.4
+            )
+        ax.set_title(
+            f"{shape_label} shaping — iter {it}\nenergy in target = {energy:.3f}"
+        )
         ax.set_xlabel(r"$x/(\lambda f/D)$")
         ax.set_ylabel(r"$y/(\lambda f/D)$")
         ax.set_aspect("equal")
@@ -303,7 +337,9 @@ def build_shaping_frames(
         fig.savefig(buf, format="png", dpi=160, bbox_inches="tight")
         plt.close(fig)
         buf.seek(0)
-        pil_frames.append(Image.open(buf).convert("P", palette=Image.ADAPTIVE, colors=256))
+        pil_frames.append(
+            Image.open(buf).convert("P", palette=Image.ADAPTIVE, colors=256)
+        )
     return pil_frames
 
 

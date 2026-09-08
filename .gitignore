@@ -28,3 +28,7 @@ docs/智能预测式远场光束闭环优化方案_进一步建议.docx
 # --- Office/word-processor temp lock files ---
 ~$*
 ~WRL*.tmp
+uv.lock
+slm_results*
+report-*
+slm_shaping_results/shaping_summary.csv

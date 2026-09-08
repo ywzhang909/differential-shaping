@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Differential (backpropagation-driven) far-field beam shaping.
 
@@ -28,6 +27,11 @@ approach).  ``spgd_shaping_optimization`` and ``hgd_shaping_optimization``
 estimate the gradient of the *same* target loss by finite-difference perturbation
 (SPGD's two-sided random perturbation / H-GD's Hadamard patterns), so all three
 methods optimise an identical objective and can be compared fairly.
+
+``target_shaping_optimization`` also supports ``direct_phase=True``, the
+*ideal phase device* mode: instead of steering ``n_act`` DM actuator commands
+it optimises the ``N*N`` per-pixel pupil phase directly (no influence basis),
+which is the theoretical upper bound for beam shaping.
 """
 
 from __future__ import annotations
@@ -37,30 +41,32 @@ import torch
 from loguru import logger
 from scipy.linalg import hadamard
 
-from ..params import (
+from differential_shaping.params import (
     N,
-    n_act,
-    delta_amp,
-    alpha_spgd,
     alpha_hgd,
+    alpha_spgd,
+    delta_amp,
+    n_act,
     seed_spgd,
+)
+from differential_shaping.params import (
     max_iter as _default_max_iter,
 )
-from ..simulation.optics import (
-    to_torch,
-    to_numpy,
+from differential_shaping.simulation.optics import (
     dm_surface,
     far_field_intensity_metric,
+    to_numpy,
+    to_torch,
 )
-from ..simulation.pupil import pupil_float_t
+from differential_shaping.simulation.pupil import pupil_float_t
 
 __all__ = [
+    "energy_in_target",
+    "hgd_shaping_optimization",
     "make_square_target",
     "make_triangle_target",
-    "energy_in_target",
-    "target_shaping_optimization",
     "spgd_shaping_optimization",
-    "hgd_shaping_optimization",
+    "target_shaping_optimization",
 ]
 
 _DEVICE = torch.device("cpu")
@@ -88,9 +94,7 @@ def make_square_target(half_width: int = 6) -> torch.Tensor:
     return mask.to(dtype=_DTYPE)
 
 
-def make_triangle_target(
-    size: int = 11, apex: str = "up"
-) -> torch.Tensor:
+def make_triangle_target(size: int = 11, apex: str = "up") -> torch.Tensor:
     """Binary isosceles triangle target centred on the focal plane.
 
     ``size`` is the triangle height and base length (base half-width is
@@ -125,8 +129,8 @@ def make_triangle_target(
     if apex in ("up", "down"):
         inside = (yy >= top) & (yy <= bot) & (torch.abs(xx - x0) <= margin)
     else:
-        inside = (xx >= x0 - h / 2.0) & (xx <= x0 + h / 2.0) & (
-            torch.abs(yy - y0) <= margin
+        inside = (
+            (xx >= x0 - h / 2.0) & (xx <= x0 + h / 2.0) & (torch.abs(yy - y0) <= margin)
         )
     return inside.to(dtype=_DTYPE)
 
@@ -134,14 +138,15 @@ def make_triangle_target(
 # ---------------------------------------------------------------------------
 # Shape-matching metric (conservation-respecting)
 # ---------------------------------------------------------------------------
-def energy_in_target(I: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+def energy_in_target(intensity: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
     """Fraction of conserved far-field energy captured inside the target.
 
-    ``(I * target).sum() / I.sum()`` — since ``I.sum()`` is invariant under the
-    DM phase this directly reports how much of the *fixed* energy has been
-    pushed into the desired shape (1.0 = perfect, all energy in target).
+    ``(intensity * target).sum() / intensity.sum()`` — since ``intensity.sum()``
+    is invariant under the DM phase this directly reports how much of the
+    *fixed* energy has been pushed into the desired shape (1.0 = perfect, all
+    energy in target).
     """
-    return (I * target).sum() / (I.sum() + 1e-12)
+    return (intensity * target).sum() / (intensity.sum() + 1e-12)
 
 
 def shaping_metric(
@@ -168,8 +173,8 @@ def shaping_metric(
         ``loss = W_m * mean((I_n - T_n)^2) - W_c * energy``,
         ``energy = energy_in_target``, ``I_n = normalised focal intensity``.
     """
-    I = far_field_intensity_metric(phase)
-    I_n = I / (I.sum() + 1e-12)
+    intensity = far_field_intensity_metric(phase)
+    I_n = intensity / (intensity.sum() + 1e-12)
     loss_match = torch.mean((I_n - target_n) ** 2)
     energy = (I_n * target_t).sum() / (target_t.sum() + 1e-12)
     loss = loss_weight_match * loss_match - loss_weight_capture * energy
@@ -180,8 +185,8 @@ def shaping_metric(
 # Differential target-loss DM shaping optimisation
 # ---------------------------------------------------------------------------
 def target_shaping_optimization(
-    turb_phase: np.ndarray,
-    inf_flat: np.ndarray,
+    turb_phase: np.ndarray | torch.Tensor,
+    inf_flat: np.ndarray | torch.Tensor,
     target: np.ndarray | torch.Tensor,
     max_iter: int = _default_max_iter,
     lr: float = 0.02,
@@ -191,6 +196,7 @@ def target_shaping_optimization(
     label: str | None = None,
     snapshot_indices: list[int] | None = None,
     snapshot_store: list | None = None,
+    direct_phase: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Reshape the far-field spot into ``target`` via backprop on the target loss.
 
@@ -217,11 +223,17 @@ def target_shaping_optimization(
         label: optional human-readable name for logging (e.g. "square"/"triangle").
         snapshot_indices: iteration indices at which to record ``(iter, u)``.
         snapshot_store:   mutable list appended with ``(iter, u)`` snapshots.
+        direct_phase: when True, optimise the per-pixel pupil phase directly
+            instead of the DM actuator basis: ``u`` is ``(N*N,)`` flattened
+            phase and ``dm_u = u.view(N, N)`` (``inf_flat`` is then unused).
+            This is the *ideal phase device* upper bound and is only practical
+            with autograd (a few thousand iterations, not finite differences).
 
     Returns:
         (u, dm_u, loss_hist, energy_hist, I_np):
-            u          (n_act,)  float64 final DM commands.
-            dm_u       (N, N)    float64 final DM surface.
+            u          (n_act,)  float64 final DM commands (or ``(N*N,)``
+                                 per-pixel phase when ``direct_phase``).
+            dm_u       (N, N)    float64 final DM surface / imprinted phase.
             loss_hist  (max_iter,) float64 backprop training loss history.
             energy_hist (max_iter,) float64 energy-in-target fraction history.
             I_np       (N, N)    float64 final normalised far-field intensity.
@@ -241,7 +253,12 @@ def target_shaping_optimization(
     target_n = target_t / (target_t.sum() + 1e-12)
     log_name = label or _shape_name(target_t)
 
-    u = torch.zeros(n_act, requires_grad=True, device=pupil_float_t.device)
+    if direct_phase:
+        # Ideal per-pixel phase device: every pupil pixel is an independent
+        # actuator; the DM influence basis is not used.
+        u = torch.zeros(N * N, requires_grad=True, device=pupil_float_t.device)
+    else:
+        u = torch.zeros(n_act, requires_grad=True, device=pupil_float_t.device)
     optimizer = torch.optim.Adam([u], lr=lr)
 
     loss_hist = np.zeros(max_iter)
@@ -253,7 +270,7 @@ def target_shaping_optimization(
 
     for it in range(max_iter):
         optimizer.zero_grad()
-        dm_u = dm_surface(u, inf_flat_T)
+        dm_u = u.view(N, N) if direct_phase else dm_surface(u, inf_flat_T)
         phase = turb_t + dm_u
         loss, _, _ = shaping_metric(
             phase, target_t, target_n, loss_weight_match, loss_weight_capture
@@ -263,7 +280,10 @@ def target_shaping_optimization(
 
         # Logging under no_grad (not part of the training graph).
         with torch.no_grad():
-            phase_eval = turb_t + dm_surface(u.detach(), inf_flat_T)
+            dm_eval = (
+                u.detach().view(N, N) if direct_phase else dm_surface(u.detach(), inf_flat_T)
+            )
+            phase_eval = turb_t + dm_eval
             I_eval = far_field_intensity_metric(phase_eval)
             loss_hist[it] = to_numpy(loss)
             energy_hist[it] = to_numpy(energy_in_target(I_eval, target_t))
@@ -278,7 +298,9 @@ def target_shaping_optimization(
             )
 
     with torch.no_grad():
-        dm_u_final = dm_surface(u.detach(), inf_flat_T)
+        dm_u_final = (
+            u.detach().view(N, N) if direct_phase else dm_surface(u.detach(), inf_flat_T)
+        )
         I_final = far_field_intensity_metric(turb_t + dm_u_final)
 
     u_np = to_numpy(u)
@@ -291,7 +313,7 @@ def target_shaping_optimization(
 def _shape_name(target: torch.Tensor) -> str:
     """Small heuristic label for logging (square / triangle / other)."""
     n = int(target.sum())
-    side = int(round(np.sqrt(n)))
+    side = round(np.sqrt(n))
     if n == side * side:
         return f"square-{side}x{side}"
     return f"target-{n}px"
@@ -374,15 +396,26 @@ def _shaping_update_loop(
 
     for it in range(max_iter):
         u, dm_u = _numeric_shaping_step(
-            turb_t, u, dm_u, delta_patterns[it], dm_deltas[it], alpha,
-            target_t, target_n, loss_weight_match, loss_weight_capture,
+            turb_t,
+            u,
+            dm_u,
+            delta_patterns[it],
+            dm_deltas[it],
+            alpha,
+            target_t,
+            target_n,
+            loss_weight_match,
+            loss_weight_capture,
         )
         # Record current loss + energy under no_grad (metric only, not the
         # perturbative estimate) for comparison with the backprop run.
         with torch.no_grad():
             loss_now, energy, _ = shaping_metric(
-                turb_t + dm_u, target_t, target_n,
-                loss_weight_match, loss_weight_capture,
+                turb_t + dm_u,
+                target_t,
+                target_n,
+                loss_weight_match,
+                loss_weight_capture,
             )
             loss_hist[it] = to_numpy(loss_now)
             energy_hist[it] = to_numpy(energy)
@@ -399,8 +432,11 @@ def _shaping_update_loop(
     with torch.no_grad():
         dm_u_final = dm_surface(u, inf_flat_T)
         _, _, I_n = shaping_metric(
-            turb_t + dm_u_final, target_t, target_n,
-            loss_weight_match, loss_weight_capture,
+            turb_t + dm_u_final,
+            target_t,
+            target_n,
+            loss_weight_match,
+            loss_weight_capture,
         )
         I_np = to_numpy(I_n)
 
@@ -452,18 +488,26 @@ def spgd_shaping_optimization(
     gen = torch.Generator()
     gen.manual_seed(seed_spgd)
     patterns = (
-        2
-        * torch.randint(0, 2, (max_iter, n_act), generator=gen).to(dtype=_DTYPE)
-        - 1
+        2 * torch.randint(0, 2, (max_iter, n_act), generator=gen).to(dtype=_DTYPE) - 1
     )
     delta_patterns = patterns * delta_amp
     dm_deltas = (delta_patterns @ inf_flat_t).reshape(max_iter, N, N)
 
     return _shaping_update_loop(
-        "SPGD", turb_phase, inf_flat, target_t, target_n,
-        delta_patterns, dm_deltas, alpha, max_iter,
-        loss_weight_match, loss_weight_capture, log_name,
-        snapshot_indices, snapshot_store,
+        "SPGD",
+        turb_phase,
+        inf_flat,
+        target_t,
+        target_n,
+        delta_patterns,
+        dm_deltas,
+        alpha,
+        max_iter,
+        loss_weight_match,
+        loss_weight_capture,
+        log_name,
+        snapshot_indices,
+        snapshot_store,
     )
 
 
@@ -505,8 +549,18 @@ def hgd_shaping_optimization(
         dm_deltas_used = dm_deltas.repeat(reps, 1, 1)[:max_iter]
 
     return _shaping_update_loop(
-        "H-GD", turb_phase, inf_flat, target_t, target_n,
-        delta_patterns_used, dm_deltas_used, alpha, max_iter,
-        loss_weight_match, loss_weight_capture, log_name,
-        snapshot_indices, snapshot_store,
+        "H-GD",
+        turb_phase,
+        inf_flat,
+        target_t,
+        target_n,
+        delta_patterns_used,
+        dm_deltas_used,
+        alpha,
+        max_iter,
+        loss_weight_match,
+        loss_weight_capture,
+        log_name,
+        snapshot_indices,
+        snapshot_store,
     )

@@ -9,6 +9,7 @@ dependencies = [
     "scipy",
     "torch>=2.5",
     "loguru>=0.7.3",
+    "click>=8.1",
 ]
 
 [project.optional-dependencies]

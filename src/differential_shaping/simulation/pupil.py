@@ -15,34 +15,33 @@ visualization layer only (not used in simulation physics):
     ``I0_peak``, ``xx_metric``, ``yy_metric``, ``extent_pupil_mm``
 """
 
-import numpy as np
 import torch
 import torch.fft
 
-from ..params import N, pixel_size, D
+from differential_shaping.params import D, N, pixel_size
 
 __all__ = [
-    # torch primary API
-    "grid_1d_t",
-    "XX_t",
-    "YY_t",
-    "pupil_mask",
-    "pupil_float_t",
-    "I0_t",
-    "I0_peak_t",
-    "xx_metric_t",
-    "yy_metric_t",
-    # numpy backward-compat shims (visualization layer)
-    "grid_1d",
+    "I0",
     "XX",
     "YY",
+    "I0_peak",
+    "I0_peak_t",
+    "I0_t",
+    "XX_t",
+    "YY_t",
+    "extent_pupil_mm",
+    # numpy backward-compat shims (visualization layer)
+    "grid_1d",
+    # torch primary API
+    "grid_1d_t",
     "pupil",
     "pupil_float",
-    "I0",
-    "I0_peak",
+    "pupil_float_t",
+    "pupil_mask",
     "xx_metric",
+    "xx_metric_t",
     "yy_metric",
-    "extent_pupil_mm",
+    "yy_metric_t",
 ]
 
 # ------------------------- device / dtype defaults -------------------------
@@ -52,7 +51,7 @@ _DTYPE = torch.float32
 # ------------------------- torch grids and pupil -------------------------
 grid_1d_t = (torch.arange(N, dtype=_DTYPE, device=_DEVICE) - N / 2) * pixel_size
 XX_t, YY_t = torch.meshgrid(grid_1d_t, grid_1d_t, indexing="xy")
-pupil_mask = (XX_t**2 + YY_t**2) <= (D / 2) ** 2        # bool tensor
+pupil_mask = (XX_t**2 + YY_t**2) <= (D / 2) ** 2  # bool tensor
 pupil_float_t = pupil_mask.to(dtype=_DTYPE)
 
 # ------------------------- torch focal-plane metric arrays -------------------------
@@ -73,7 +72,7 @@ yy_metric_t, xx_metric_t = torch.meshgrid(
 grid_1d = grid_1d_t.numpy()
 XX = XX_t.numpy()
 YY = YY_t.numpy()
-pupil = pupil_mask.numpy()          # bool ndarray
+pupil = pupil_mask.numpy()  # bool ndarray
 pupil_float = pupil_float_t.numpy()
 
 extent_pupil_mm = [-D / 2 * 1e3, D / 2 * 1e3, -D / 2 * 1e3, D / 2 * 1e3]

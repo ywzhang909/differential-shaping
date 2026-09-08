@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Focal-plane intensity, performance metrics, DM surface, and display utilities.
 
@@ -21,8 +20,9 @@ import numpy as np
 import torch
 import torch.fft
 
-from ..params import N, pad_factor_show
-from .pupil import pupil_float_t, I0_peak_t, xx_metric_t, yy_metric_t
+from differential_shaping.params import N, pad_factor_show
+
+from .pupil import I0_peak_t, pupil_float_t, xx_metric_t, yy_metric_t
 from .turbulence import remove_piston
 
 _DEVICE = torch.device("cpu")
@@ -49,14 +49,14 @@ def compute_metrics(
     phase: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Return (J = centroid mean radius in pixels, SR, intensity) as torch."""
-    I = far_field_intensity_metric(phase)
-    total = I.sum() + 1e-30
-    cx = (xx_metric_t * I).sum() / total
-    cy = (yy_metric_t * I).sum() / total
+    intensity = far_field_intensity_metric(phase)
+    total = intensity.sum() + 1e-30
+    cx = (xx_metric_t * intensity).sum() / total
+    cy = (yy_metric_t * intensity).sum() / total
     r_pix = torch.sqrt((xx_metric_t - cx) ** 2 + (yy_metric_t - cy) ** 2)
-    J_mr = (r_pix * I).sum() / total
-    SR = I.max() / (I0_peak_t + 1e-30)
-    return J_mr, SR, I
+    J_mr = (r_pix * intensity).sum() / total
+    SR = intensity.max() / (I0_peak_t + 1e-30)
+    return J_mr, SR, intensity
 
 
 def far_field_intensity_padded(
@@ -100,8 +100,10 @@ def to_numpy(t: torch.Tensor) -> np.ndarray:
     return t.detach().cpu().numpy().astype(np.float64)
 
 
-def to_torch(a: np.ndarray, requires_grad: bool = False) -> torch.Tensor:
-    """Convert a numpy array to an autograd-tracked float32 CPU tensor."""
+def to_torch(
+    a: np.ndarray | torch.Tensor, requires_grad: bool = False
+) -> torch.Tensor:
+    """Convert a numpy array or CPU torch tensor to an autograd-tracked float32 tensor."""
     t = torch.from_numpy(np.asarray(a, dtype=np.float64)).to(
         dtype=_DTYPE, device=_DEVICE
     )

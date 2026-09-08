@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Stochastic Parallel Gradient Descent (SPGD) optimization.
 
@@ -13,10 +12,17 @@ import numpy as np
 import torch
 from loguru import logger
 
-from ..params import delta_amp, alpha_spgd, max_iter, n_act, N, seed_spgd
-from ..simulation.optics import compute_metrics, to_numpy
+from differential_shaping import params
+from differential_shaping.params import (
+    N,
+    alpha_spgd,
+    delta_amp,
+    n_act,
+    seed_spgd,
+)
+from differential_shaping.simulation.optics import compute_metrics, to_numpy
 
-__all__ = ["update_by_two_sided_perturbation", "spgd_optimization"]
+__all__ = ["spgd_optimization", "update_by_two_sided_perturbation"]
 
 _DT = torch.float32  # working dtype for all torch arrays
 
@@ -50,6 +56,7 @@ def spgd_optimization(
     inf_flat,
     snapshot_indices: list[int] | None = None,
     snapshot_store: list | None = None,
+    max_iter: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Run SPGD with two-sided perturbation for max_iter steps.
 
@@ -66,6 +73,8 @@ def spgd_optimization(
         Iteration numbers at which to store a snapshot of the control vector.
     snapshot_store : list, optional
         Mutable list; ``(iteration, np.ndarray)`` tuples are appended.
+    max_iter : int, optional
+        Number of iterations.  Defaults to ``params.max_iter``.
 
     Returns
     -------
@@ -73,6 +82,9 @@ def spgd_optimization(
         ``u_np`` shape ``(n_act,)``, ``dm_np`` shape ``(N, N)``,
         ``J_hist_np`` and ``SR_hist_np`` shape ``(max_iter,)``.
     """
+    if max_iter is None:
+        max_iter = params.max_iter
+
     # --- normalise inputs to float32 torch tensors -----------------------
     if isinstance(turb_phase, np.ndarray):
         turb_phase = torch.from_numpy(np.asarray(turb_phase, dtype=np.float64)).to(
@@ -90,7 +102,9 @@ def spgd_optimization(
     # --- precompute perturbation DM surfaces (pure torch) ----------------
     gen = torch.Generator()
     gen.manual_seed(seed_spgd)
-    patterns = (2 * torch.randint(0, 2, (max_iter, n_act), generator=gen).to(dtype=_DT) - 1)
+    patterns = (
+        2 * torch.randint(0, 2, (max_iter, n_act), generator=gen).to(dtype=_DT) - 1
+    )
     delta_patterns = patterns * delta_amp
 
     # (max_iter, n_act) @ (n_act, N*N) -> (max_iter, N*N) -> (max_iter, N, N)
@@ -118,8 +132,6 @@ def spgd_optimization(
             snapshot_store.append((it + 1, to_numpy(u).copy()))
 
         if it % 500 == 0:
-            logger.info(
-                f"SPGD {it:4d}: J={J_hist[it]:.3f} pix, SR={SR_hist[it]:.4f}"
-            )
+            logger.info(f"SPGD {it:4d}: J={J_hist[it]:.3f} pix, SR={SR_hist[it]:.4f}")
 
     return to_numpy(u), to_numpy(dm_u), J_hist, SR_hist

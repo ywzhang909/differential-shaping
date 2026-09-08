@@ -9,14 +9,15 @@ and residual phase maps.
 
 from pathlib import Path
 
-import numpy as np
 import matplotlib.pyplot as plt
+import numpy as np
 
 from ..params import pad_factor_show, spot_half_width_lamD
-from ..simulation.pupil import pupil, extent_pupil_mm
-from ..simulation.optics import far_field_intensity_padded, compute_metrics, crop_center, to_numpy as _to_np, to_torch as _to_t
+from ..simulation.optics import compute_metrics, crop_center, far_field_intensity_padded
+from ..simulation.optics import to_numpy as _to_np
+from ..simulation.optics import to_torch as _to_t
+from ..simulation.pupil import extent_pupil_mm, pupil
 from ..simulation.turbulence import remove_piston
-
 
 # Colour map used for consistent per-algorithm styling across plots / animations.
 ALGO_COLORS = {
@@ -47,7 +48,6 @@ def plot_convergence_all(
 
     for name, (J_hist, SR_hist) in algo_results.items():
         color = ALGO_COLORS.get(name, "tab:gray")
-        it_j = np.arange(J_hist.size) if J_hist.ndim == 1 else J_hist.shape[1]
         ax_j.plot(np.arange(J_hist.size), J_hist, color=color, label=name)
         ax_sr.plot(np.arange(SR_hist.size), SR_hist, color=color, label=name)
 
@@ -96,7 +96,7 @@ def plot_results(
         ("SPGD", phase_spgd, J_spgd_end, SR_spgd_end),
         ("H-GD", phase_hgd, J_hgd_end, SR_hgd_end),
     ]
-    half_pix = int(round(spot_half_width_lamD * pad_factor_show))
+    half_pix = round(spot_half_width_lamD * pad_factor_show)
 
     fig = plt.figure(figsize=(19, 9))
     gs = fig.add_gridspec(2, 5, width_ratios=[1, 1, 1, 1, 1.05], height_ratios=[1, 1])
@@ -105,9 +105,13 @@ def plot_results(
     for col, (name, phase, Jv, SRv) in enumerate(spots):
         ax = fig.add_subplot(gs[0, col])
         I_rel = _to_np(far_field_intensity_padded(_to_t(phase))) / (I0_pad_peak + 1e-30)
-        I_db_raw, extent = crop_center(_to_t(10 * np.log10(np.maximum(I_rel, 1e-8))), half_pix)
+        I_db_raw, extent = crop_center(
+            _to_t(10 * np.log10(np.maximum(I_rel, 1e-8))), half_pix
+        )
         I_db = _to_np(I_db_raw)
-        last_im = ax.imshow(I_db, extent=extent, origin="lower", cmap="jet", vmin=-40, vmax=0)
+        last_im = ax.imshow(
+            I_db, extent=extent, origin="lower", cmap="jet", vmin=-40, vmax=0
+        )
         ax.set_title(f"{name}\nJ={Jv:.2f} pix, SR={SRv:.3f}")
         ax.set_xlabel(r"$x/(\lambda f/D)$")
         ax.set_ylabel(r"$y/(\lambda f/D)$")
@@ -146,7 +150,9 @@ def plot_results(
         vmax=lim,
         interpolation="nearest",
     )
-    ax.set_title(f"Initial phase screen\nRMS={np.std(_to_np(turb_phase)[pupil]):.3f} rad")
+    ax.set_title(
+        f"Initial phase screen\nRMS={np.std(_to_np(turb_phase)[pupil]):.3f} rad"
+    )
     ax.set_xlabel("x (mm)")
     ax.set_ylabel("y (mm)")
     ax.set_aspect("equal")
@@ -250,8 +256,13 @@ def plot_shaping_convergence(
 ) -> None:
     """Plot the conservation-respecting energy-in-target convergence curve."""
     fig, ax = plt.subplots(figsize=(7, 4.5))
-    ax.plot(np.arange(energy_hist.size), energy_hist, color="tab:red", lw=1.8,
-            label=f"energy in {shape_label} target")
+    ax.plot(
+        np.arange(energy_hist.size),
+        energy_hist,
+        color="tab:red",
+        lw=1.8,
+        label=f"energy in {shape_label} target",
+    )
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Fraction of conserved energy in target")
     ax.set_title(f"Beam shaping convergence — {shape_label}")
@@ -279,7 +290,10 @@ def plot_shaping_convergence_comparison(
     for name, energy_hist in series.items():
         color = colors.get(name, "k")
         ax.plot(
-            np.arange(energy_hist.size), energy_hist, color=color, lw=1.8,
+            np.arange(energy_hist.size),
+            energy_hist,
+            color=color,
+            lw=1.8,
             label=f"{name} (final {energy_hist[-1]:.4f})",
         )
     ax.set_xlabel("Iteration")

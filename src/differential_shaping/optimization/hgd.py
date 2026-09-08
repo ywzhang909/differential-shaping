@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Hadamard Gradient Descent (H-GD) optimization.
 
@@ -14,9 +13,10 @@ import torch
 from loguru import logger
 from scipy.linalg import hadamard
 
-from ..params import delta_amp, alpha_hgd, max_iter, n_act, N
-from ..simulation.optics import compute_metrics, to_numpy
-from .spgd import update_by_two_sided_perturbation
+from differential_shaping import params
+from differential_shaping.optimization.spgd import update_by_two_sided_perturbation
+from differential_shaping.params import N, alpha_hgd, delta_amp, n_act
+from differential_shaping.simulation.optics import compute_metrics, to_numpy
 
 __all__ = ["hgd_optimization"]
 
@@ -28,6 +28,7 @@ def hgd_optimization(
     inf_flat,
     snapshot_indices: list[int] | None = None,
     snapshot_store: list | None = None,
+    max_iter: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Run H-GD with two-sided perturbation for max_iter steps.
 
@@ -44,6 +45,8 @@ def hgd_optimization(
         Iteration numbers at which to store a snapshot of the control vector.
     snapshot_store : list, optional
         Mutable list; ``(iteration, np.ndarray)`` tuples are appended.
+    max_iter : int, optional
+        Number of iterations.  Defaults to ``params.max_iter``.
 
     Returns
     -------
@@ -51,6 +54,9 @@ def hgd_optimization(
         ``u_np`` shape ``(n_act,)``, ``dm_np`` shape ``(N, N)``,
         ``J_hist_np`` and ``SR_hist_np`` shape ``(max_iter,)``.
     """
+    if max_iter is None:
+        max_iter = params.max_iter
+
     # --- normalise inputs to float32 torch tensors -----------------------
     if isinstance(turb_phase, np.ndarray):
         turb_phase = torch.from_numpy(np.asarray(turb_phase, dtype=np.float64)).to(
@@ -99,8 +105,6 @@ def hgd_optimization(
             snapshot_store.append((it + 1, to_numpy(u).copy()))
 
         if it % 500 == 0:
-            logger.info(
-                f"H-GD {it:4d}: J={J_hist[it]:.3f} pix, SR={SR_hist[it]:.4f}"
-            )
+            logger.info(f"H-GD {it:4d}: J={J_hist[it]:.3f} pix, SR={SR_hist[it]:.4f}")
 
     return to_numpy(u), to_numpy(dm_u), J_hist, SR_hist

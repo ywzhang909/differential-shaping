@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 PyTorch backpropagation-driven wavefront-sensorless optimiser (Torch-GD).
 
@@ -18,23 +17,24 @@ import numpy as np
 import torch
 from loguru import logger
 
-from ..params import N, n_act, max_iter as _default_max_iter
-from ..simulation.optics import (
-    to_torch,
-    to_numpy,
+from differential_shaping.params import n_act
+from differential_shaping.params import max_iter as _default_max_iter
+from differential_shaping.simulation.optics import (
+    compute_metrics,
     dm_surface,
     far_field_intensity_metric,
-    compute_metrics,
     gaussian_window,
+    to_numpy,
+    to_torch,
 )
-from ..simulation.pupil import pupil_float_t
+from differential_shaping.simulation.pupil import pupil_float_t
 
 __all__ = ["torch_gd_optimization"]
 
 
 def torch_gd_optimization(
-    turb_phase: np.ndarray,
-    inf_flat: np.ndarray,
+    turb_phase: np.ndarray | torch.Tensor,
+    inf_flat: np.ndarray | torch.Tensor,
     max_iter: int = _default_max_iter,
     lr: float = 0.01,
     seed: int = 42,
@@ -64,9 +64,9 @@ def torch_gd_optimization(
     """
     torch.manual_seed(seed)
 
-    turb_t = to_torch(turb_phase)                    # (N, N) constant graph input
-    inf_flat_t = to_torch(inf_flat)                  # (n_act, N*N)
-    inf_flat_T = inf_flat_t.t().contiguous()         # (N*N, n_act)
+    turb_t = to_torch(turb_phase)  # (N, N) constant graph input
+    inf_flat_t = to_torch(inf_flat)  # (n_act, N*N)
+    inf_flat_T = inf_flat_t.t().contiguous()  # (N*N, n_act)
 
     u = torch.zeros(n_act, requires_grad=True, device=pupil_float_t.device)
 
@@ -81,11 +81,11 @@ def torch_gd_optimization(
 
     for it in range(max_iter):
         optimizer.zero_grad()
-        dm_u = dm_surface(u, inf_flat_T)       # (N, N)
+        dm_u = dm_surface(u, inf_flat_T)  # (N, N)
         phase = turb_t + dm_u
-        I = far_field_intensity_metric(phase)         # differentiable forward
+        intensity = far_field_intensity_metric(phase)  # differentiable forward
         # Maximise on-axis energy: dense smooth gradients over the Airy core.
-        loss = -(I * gaussian_window).sum()
+        loss = -(intensity * gaussian_window).sum()
         loss.backward()
         optimizer.step()
 
@@ -100,7 +100,9 @@ def torch_gd_optimization(
             snapshot_store.append((it + 1, to_numpy(u).copy()))
 
         if it % 100 == 0 or it == max_iter - 1:
-            logger.info(f"Torch-GD {it:4d}: J={J_hist[it]:.3f} pix, SR={SR_hist[it]:.4f}")
+            logger.info(
+                f"Torch-GD {it:4d}: J={J_hist[it]:.3f} pix, SR={SR_hist[it]:.4f}"
+            )
 
     with torch.no_grad():
         dm_u_final = dm_surface(u, inf_flat_T)
